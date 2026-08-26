@@ -1,0 +1,126 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '4.0.7'
+	id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.example'
+version = '0.1.0-SNAPSHOT'
+description = 'Backend MVP: préstamos, cheques/factoring, cuenta corriente, contabilidad'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(21)
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+ext {
+	set('springCloudVersion', "2025.1.2")
+	set('springCloudAwsVersion', "4.0.0")
+	set('mapstructVersion', "1.6.3")
+	// spring-boot-dependencies:4.0.7 importa testcontainers-bom como BOM
+	// anidada, pero el plugin io.spring.dependency-management no sigue
+	// imports anidados de forma confiable — hay que declararla acá también
+	// (misma versión que trae el BOM de Boot).
+	set('testcontainersVersion', "2.0.5")
+	// springdoc 3.x es la línea que sigue a los módulos de Boot 4
+	// (spring-boot-tomcat, spring-boot-webmvc, etc.) — 2.x apunta a Boot 3.
+	set('springdocVersion', "3.1.0")
+}
+
+dependencyManagement {
+	imports {
+		// BOM de Spring Cloud (trae el circuit breaker de Resilience4j
+		// ya alineado con Spring Boot 4 / Framework 7)
+		mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+		// BOM de Spring Cloud AWS (SQS, S3, Secrets Manager)
+		mavenBom "io.awspring.cloud:spring-cloud-aws-dependencies:${springCloudAwsVersion}"
+		mavenBom "org.testcontainers:testcontainers-bom:${testcontainersVersion}"
+	}
+}
+
+dependencies {
+	// ===================== Web / API =====================
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	// Swagger UI + /v3/api-docs. Las properties springdoc.* ya estaban en
+	// application.properties desde el principio del proyecto, pero nunca
+	// hubo una dependencia real generando nada — quedaban sin efecto.
+	implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:${springdocVersion}"
+
+	// ===================== Persistencia =====================
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	runtimeOnly 'org.postgresql:postgresql'
+
+	// Migraciones. Desde Flyway 10, el soporte de Postgres va en un
+	// módulo aparte del core. Desde Spring Boot 4, la autoconfiguración de
+	// Flyway también se separó del core de Boot en su propio módulo —
+	// depender sólo de flyway-core no alcanza para que se ejecute solo al
+	// arrancar, hace falta este también.
+	implementation 'org.flywaydb:flyway-core'
+	implementation 'org.flywaydb:flyway-database-postgresql'
+	implementation 'org.springframework.boot:spring-boot-flyway'
+
+	// ===================== Seguridad =====================
+	implementation 'org.springframework.boot:spring-boot-starter-security'
+	implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+
+	// ===================== Resiliencia (llamadas a Nosis/AFIP/BNA) =====================
+	// Spring Boot 4 trae @Retryable/@ConcurrencyLimit nativos para casos
+	// simples; el circuit breaker de Resilience4j vía Spring Cloud sigue
+	// siendo la pieza que falta para las integraciones externas (estado
+	// abierto/cerrado/semi-abierto con fallback).
+	implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-resilience4j'
+	// Spring Boot 4 renombró spring-boot-starter-aop a spring-boot-starter-aspectj
+	implementation 'org.springframework.boot:spring-boot-starter-aspectj'
+
+	// ===================== AWS (SQS para eventos async, S3 para
+	// documentos, Secrets Manager para credenciales/certificados) =====================
+	implementation 'io.awspring.cloud:spring-cloud-aws-starter-sqs'
+	implementation 'io.awspring.cloud:spring-cloud-aws-starter-s3'
+	implementation 'io.awspring.cloud:spring-cloud-aws-starter-secrets-manager'
+
+	// ===================== Cache (scoring, cotizaciones) =====================
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+	// spring.cache.type=caffeine está en application.properties desde el
+	// principio del proyecto, pero sin esta dependencia (ni @EnableCaching)
+	// esa property no hacía nada — Redis de arriba no es lo que
+	// spring.cache.type activa. Primer uso real: revocación de tokens, ver
+	// feature-specs/5-revocacion-tokens.md.
+	implementation 'org.springframework.boot:spring-boot-starter-cache'
+	implementation 'com.github.ben-manes.caffeine:caffeine'
+
+	// ===================== Observabilidad =====================
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	implementation 'io.micrometer:micrometer-registry-prometheus'
+	implementation 'io.micrometer:micrometer-tracing-bridge-otel'
+	implementation 'io.opentelemetry:opentelemetry-exporter-otlp'
+
+	// ===================== Utilitarios de desarrollo =====================
+	compileOnly 'org.projectlombok:lombok'
+	annotationProcessor 'org.projectlombok:lombok'
+
+	implementation "org.mapstruct:mapstruct:${mapstructVersion}"
+	annotationProcessor "org.mapstruct:mapstruct-processor:${mapstructVersion}"
+	// Necesario si Lombok y MapStruct conviven (orden de annotation processors)
+	annotationProcessor 'org.projectlombok:lombok-mapstruct-binding:0.2.0'
+
+	// ===================== Testing =====================
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testImplementation 'org.springframework.security:spring-security-test'
+	// Testcontainers 2.x renombró estos módulos con el prefijo
+	// "testcontainers-" (antes eran org.testcontainers:junit-jupiter y
+	// org.testcontainers:postgresql a secas).
+	testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+	testImplementation 'org.testcontainers:testcontainers-postgresql'
+	testImplementation 'com.github.tomakehurst:wiremock-standalone:3.0.1'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
